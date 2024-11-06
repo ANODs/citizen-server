@@ -19,14 +19,14 @@ async function initializeDatabase() {
   const client = await pool.connect();
   try {
     // Check if the citizens table exists
-    const tableExists = await client.query(`
+    const citizensTableExists = await client.query(`
       SELECT EXISTS (
         SELECT FROM information_schema.tables 
         WHERE table_name = 'citizens'
       );
     `);
 
-    if (!tableExists.rows[0].exists) {
+    if (!citizensTableExists.rows[0].exists) {
       console.log('Creating citizens table...');
       await client.query(`
         CREATE TABLE citizens (
@@ -182,13 +182,140 @@ async function initializeDatabase() {
           preferred_clothing_style VARCHAR(50)
         )
       `);
-
       console.log('Citizens table created.');
     } else {
       console.log('Citizens table already exists.');
     }
+
+    // Check if the statistics table exists
+    const statsTableExists = await client.query(`
+      SELECT EXISTS (
+        SELECT FROM information_schema.tables 
+        WHERE table_name = 'statistics'
+      );
+    `);
+
+    if (!statsTableExists.rows[0].exists) {
+      console.log('Creating statistics table...');
+      await client.query(`
+        CREATE TABLE statistics (
+          id SERIAL PRIMARY KEY,
+          avg_age_male FLOAT,
+          avg_age_female FLOAT,
+          gender_distribution JSONB,
+          education_distribution JSONB,
+          marital_status_distribution JSONB,
+          avg_salary FLOAT,
+          avg_children_count FLOAT,
+          citizenship_distribution JSONB,
+          last_updated TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+      `);
+      console.log('Statistics table created.');
+    } else {
+      console.log('Statistics table already exists.');
+    }
+
   } catch (err) {
     console.error('Error initializing database', err);
+  } finally {
+    client.release();
+  }
+}
+
+// Function to calculate and update statistics
+async function updateStatistics() {
+  const client = await pool.connect();
+  try {
+    const stats = await client.query(`
+      WITH age_stats AS (
+        SELECT 
+          AVG(CASE WHEN gender = 'male' THEN EXTRACT(YEAR FROM age(birth_date)) END) as avg_age_male,
+          AVG(CASE WHEN gender = 'female' THEN EXTRACT(YEAR FROM age(birth_date)) END) as avg_age_female
+        FROM citizens
+      ),
+      gender_dist AS (
+        SELECT jsonb_object_agg(gender, count) as gender_distribution
+        FROM (
+          SELECT gender, COUNT(*) as count
+          FROM citizens
+          GROUP BY gender
+        ) as gender_counts
+      ),
+      education_dist AS (
+        SELECT jsonb_object_agg(education_level, count) as education_distribution
+        FROM (
+          SELECT education_level, COUNT(*) as count
+          FROM citizens
+          GROUP BY education_level
+        ) as education_counts
+      ),
+      marital_dist AS (
+        SELECT jsonb_object_agg(marital_status, count) as marital_status_distribution
+        FROM (
+          SELECT marital_status, COUNT(*) as count
+          FROM citizens
+          GROUP BY marital_status
+        ) as marital_counts
+      ),
+      salary_stats AS (
+        SELECT AVG(salary) as avg_salary
+        FROM citizens
+      ),
+      children_stats AS (
+        SELECT AVG(children_count) as avg_children_count
+        FROM citizens
+      ),
+      citizenship_dist AS (
+        SELECT jsonb_object_agg(citizenship, count) as citizenship_distribution
+        FROM (
+          SELECT citizenship, COUNT(*) as count
+          FROM citizens
+          GROUP BY citizenship
+        ) as citizenship_counts
+      )
+      INSERT INTO statistics (
+        avg_age_male, 
+        avg_age_female, 
+        gender_distribution, 
+        education_distribution, 
+        marital_status_distribution, 
+        avg_salary, 
+        avg_children_count, 
+        citizenship_distribution
+      )
+      SELECT 
+        age_stats.avg_age_male,
+        age_stats.avg_age_female,
+        gender_dist.gender_distribution,
+        education_dist.education_distribution,
+        marital_dist.marital_status_distribution,
+        salary_stats.avg_salary,
+        children_stats.avg_children_count,
+        citizenship_dist.citizenship_distribution
+      FROM 
+        age_stats, 
+        gender_dist, 
+        education_dist, 
+        marital_dist, 
+        salary_stats, 
+        children_stats, 
+        citizenship_dist
+      ON CONFLICT (id) DO UPDATE
+      SET 
+        avg_age_male = EXCLUDED.avg_age_male,
+        avg_age_female = EXCLUDED.avg_age_female,
+        gender_distribution = EXCLUDED.gender_distribution,
+        education_distribution = EXCLUDED.education_distribution,
+        marital_status_distribution = EXCLUDED.marital_status_distribution,
+        avg_salary = EXCLUDED.avg_salary,
+        avg_children_count = EXCLUDED.avg_children_count,
+        citizenship_distribution = EXCLUDED.citizenship_distribution,
+        last_updated = CURRENT_TIMESTAMP
+    `);
+    console.log('Statistics updated successfully');
+  } catch (err) {
+    console.error('Error updating statistics', err);
   } finally {
     client.release();
   }
@@ -226,10 +353,64 @@ app.get('/api/citizens/slice/:start/:end', async (req, res) => {
   }
 });
 
+// Create a new citizen
+app.post('/api/citizens', async (req, res) => {
+  const newCitizen = req.body;
+  try {
+    const result = await pool.query(
+      'INSERT INTO citizens (first_name, last_name, birth_date, gender, address, city, country, email) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
+      [newCitizen.first_name, newCitizen.last_name, newCitizen.birth_date, newCitizen.gender, newCitizen.address, newCitizen.city, newCitizen.country, newCitizen.email]
+    );
+    res.status(201).json(result.rows[0]);
+    updateStatistics();
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'An error occurred while creating the citizen' });
+  }
+});
+
+// Update a citizen
+app.put('/api/citizens/:id', async (req, res) => {
+  const { id } = req.params;
+  const updatedCitizen = req.body;
+  try {
+    const result = await pool.query(
+      'UPDATE citizens SET first_name = $1, last_name = $2, birth_date = $3, gender = $4, address = $5, city = $6, country = $7, email = $8 WHERE id = $9 RETURNING *',
+      [updatedCitizen.first_name, updatedCitizen.last_name, updatedCitizen.birth_date, updatedCitizen.gender, updatedCitizen.address, updatedCitizen.city, updatedCitizen.country, updatedCitizen.email, id]
+    );
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: 'Citizen not found' });
+    } else {
+      res.json(result.rows[0]);
+      updateStatistics();
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'An error occurred while updating the citizen' });
+  }
+});
+
+// Get statistics
+app.get('/api/statistics', async (req, res) => {
+  try {
+    const result = await pool.query('SELECT * FROM statistics ORDER BY last_updated DESC LIMIT 1');
+    if (result.rows.length === 0) {
+      res.status(404).json({ error: 'Statistics not found' });
+    } else {
+      res.json(result.rows[0]);
+    }
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'An error occurred while fetching statistics' });
+  }
+});
+
 // Start server and initialize database
 initializeDatabase().then(() => {
-  app.listen(process.env.PORT || 3000, () => {
-    console.log(`Server is running`);
+  updateStatistics().then(() => {
+    app.listen(process.env.PORT || 3000, () => {
+      console.log(`Server is running`);
+    });
   });
 }).catch(err => {
   console.error('Failed to initialize database', err);
