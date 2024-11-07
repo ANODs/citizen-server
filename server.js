@@ -429,7 +429,7 @@ initializeDatabase().then(() => {
 
 app.post('/api/citizens/search', async (req, res) => {
   console.log('Received search request:', req.body);
-  
+
   const filters = req.body;
   let query = 'SELECT * FROM citizens WHERE 1=1';
   const values = [];
@@ -452,8 +452,9 @@ app.post('/api/citizens/search', async (req, res) => {
     });
   }
 
-  query += ` AND (${conditions.join(' OR ')})`;
-  
+  // Используем AND между условиями вместо OR
+  query += ` AND ${conditions.join(' AND ')}`;
+
   console.log('Executing query:', query);
   console.log('Query parameters:', values);
 
