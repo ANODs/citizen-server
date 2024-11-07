@@ -345,8 +345,16 @@ app.get('/api/citizens/slice/:start/:end', async (req, res) => {
   const limit = end - start;
   
   try {
+    const countResult = await pool.query('SELECT COUNT(*) FROM citizens');
+    const totalCount = parseInt(countResult.rows[0].count);
+    
     const result = await pool.query('SELECT * FROM citizens ORDER BY id ASC OFFSET $1 LIMIT $2', [start, limit]);
-    res.json(result.rows);
+    
+    res.setHeader('X-Total-Count', totalCount);
+    res.json({
+      citizens: result.rows,
+      totalCount: totalCount
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'An error occurred while fetching citizens slice' });
