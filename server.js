@@ -428,6 +428,8 @@ initializeDatabase().then(() => {
 });
 
 app.post('/api/citizens/search', async (req, res) => {
+  console.log('Received search request:', req.body);
+  
   const filters = req.body;
   let query = 'SELECT * FROM citizens WHERE 1=1';
   const values = [];
@@ -442,18 +444,28 @@ app.post('/api/citizens/search', async (req, res) => {
     }
   }
 
-  if (conditions.length > 0) {
-    query += ` AND (${conditions.join(' OR ')})`;
+  if (conditions.length === 0) {
+    console.log('Empty search request received. Returning all citizens.');
+    return res.json({
+      citizens: [],
+      totalCount: 0
+    });
   }
+
+  query += ` AND (${conditions.join(' OR ')})`;
+  
+  console.log('Executing query:', query);
+  console.log('Query parameters:', values);
 
   try {
     const result = await pool.query(query, values);
+    console.log(`Search completed. Found ${result.rowCount} citizens.`);
     res.json({
       citizens: result.rows,
       totalCount: result.rowCount
     });
   } catch (err) {
-    console.error(err);
+    console.error('Error occurred while searching citizens:', err);
     res.status(500).json({ error: 'An error occurred while searching citizens' });
   }
 });
