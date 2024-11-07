@@ -432,18 +432,26 @@ app.post('/api/citizens/search', async (req, res) => {
   let query = 'SELECT * FROM citizens WHERE 1=1';
   const values = [];
   let paramCounter = 1;
+  const conditions = [];
 
   for (const [key, value] of Object.entries(filters)) {
     if (value !== undefined && value !== '') {
-      query += ` AND ${key} ILIKE $${paramCounter}`;
+      conditions.push(`${key} ILIKE $${paramCounter}`);
       values.push(`%${value}%`);
       paramCounter++;
     }
   }
 
+  if (conditions.length > 0) {
+    query += ` AND (${conditions.join(' OR ')})`;
+  }
+
   try {
     const result = await pool.query(query, values);
-    res.json(result.rows);
+    res.json({
+      citizens: result.rows,
+      totalCount: result.rowCount
+    });
   } catch (err) {
     console.error(err);
     res.status(500).json({ error: 'An error occurred while searching citizens' });
