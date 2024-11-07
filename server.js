@@ -426,3 +426,26 @@ initializeDatabase().then(() => {
   console.error('Failed to initialize database', err);
   process.exit(1);
 });
+
+app.post('/api/citizens/search', async (req, res) => {
+  const filters = req.body;
+  let query = 'SELECT * FROM citizens WHERE 1=1';
+  const values = [];
+  let paramCounter = 1;
+
+  for (const [key, value] of Object.entries(filters)) {
+    if (value !== undefined && value !== '') {
+      query += ` AND ${key} ILIKE $${paramCounter}`;
+      values.push(`%${value}%`);
+      paramCounter++;
+    }
+  }
+
+  try {
+    const result = await pool.query(query, values);
+    res.json(result.rows);
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: 'An error occurred while searching citizens' });
+  }
+});
