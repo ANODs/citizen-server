@@ -348,9 +348,11 @@ app.get('/api/citizens/slice/:start/:end', async (req, res) => {
     const countResult = await pool.query('SELECT COUNT(*) FROM citizens');
     const totalCount = parseInt(countResult.rows[0].count);
     
-    const result = await pool.query('SELECT * FROM citizens ORDER BY id ASC OFFSET $1 LIMIT $2', [start, limit]);
+    const result = await pool.query(
+      'SELECT id, first_name, last_name, birth_date, address FROM citizens ORDER BY id ASC OFFSET $1 LIMIT $2',
+      [start, limit]
+    );
     
-    res.setHeader('X-Total-Count', totalCount);
     res.json({
       citizens: result.rows,
       totalCount: totalCount
