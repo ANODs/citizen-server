@@ -452,14 +452,22 @@ app.post('/api/citizens/search', async (req, res) => {
     });
   }
 
-  // Используем AND между условиями вместо OR
   query += ` AND ${conditions.join(' AND ')}`;
 
   console.log('Executing query:', query);
   console.log('Query parameters:', values);
 
   try {
-    const result = await pool.query(query, values);
+    const timeoutPromise = new Promise((_, reject) => {
+      setTimeout(() => {
+        reject(new Error('Search timeout'));
+      }, 60000); // 60 seconds timeout
+    });
+
+    const queryPromise = pool.query(query, values);
+
+    const result = await Promise.race([queryPromise, timeoutPromise]);
+
     console.log(`Search completed. Found ${result.rowCount} citizens.`);
     res.json({
       citizens: result.rows,
@@ -467,6 +475,10 @@ app.post('/api/citizens/search', async (req, res) => {
     });
   } catch (err) {
     console.error('Error occurred while searching citizens:', err);
-    res.status(500).json({ error: 'An error occurred while searching citizens' });
+    if (err.message === 'Search timeout') {
+      res.status(408).json({ error: 'Search request timed out. Please try a more specific search.' });
+    } else {
+      res.status(500).json({ error: 'An error occurred while searching citizens' });
+    }
   }
 });
