@@ -366,16 +366,27 @@ app.get('/api/citizens/slice/:start/:end', async (req, res) => {
 // Create a new citizen
 app.post('/api/citizens', async (req, res) => {
   const newCitizen = req.body;
+  const client = await pool.connect();
+
   try {
-    const result = await pool.query(
-      'INSERT INTO citizens (first_name, last_name, birth_date, gender, address, city, country, email) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *',
-      [newCitizen.first_name, newCitizen.last_name, newCitizen.birth_date, newCitizen.gender, newCitizen.address, newCitizen.city, newCitizen.country, newCitizen.email]
-    );
+    await client.query('BEGIN');
+
+    const fields = Object.keys(newCitizen);
+    const values = Object.values(newCitizen);
+    const placeholders = fields.map((_, index) => `$${index + 1}`).join(', ');
+    
+    const query = `INSERT INTO citizens (${fields.join(', ')}) VALUES (${placeholders}) RETURNING *`;
+    const result = await client.query(query, values);
+
+    await updateStatistics();
+    await client.query('COMMIT');
     res.status(201).json(result.rows[0]);
-    updateStatistics();
   } catch (err) {
+    await client.query('ROLLBACK');
     console.error(err);
     res.status(500).json({ error: 'An error occurred while creating the citizen' });
+  } finally {
+    client.release();
   }
 });
 
@@ -383,20 +394,32 @@ app.post('/api/citizens', async (req, res) => {
 app.put('/api/citizens/:id', async (req, res) => {
   const { id } = req.params;
   const updatedCitizen = req.body;
+  const client = await pool.connect();
+
   try {
-    const result = await pool.query(
-      'UPDATE citizens SET first_name = $1, last_name = $2, birth_date = $3, gender = $4, address = $5, city = $6, country = $7, email = $8 WHERE id = $9 RETURNING *',
-      [updatedCitizen.first_name, updatedCitizen.last_name, updatedCitizen.birth_date, updatedCitizen.gender, updatedCitizen.address, updatedCitizen.city, updatedCitizen.country, updatedCitizen.email, id]
-    );
+    await client.query('BEGIN');
+
+    const fields = Object.keys(updatedCitizen);
+    const values = Object.values(updatedCitizen);
+    const placeholders = fields.map((field, index) => `${field} = $${index + 1}`).join(', ');
+    
+    const query = `UPDATE citizens SET ${placeholders} WHERE id = $${fields.length + 1} RETURNING *`;
+    const result = await client.query(query, [...values, id]);
+
     if (result.rows.length === 0) {
+      await client.query('ROLLBACK');
       res.status(404).json({ error: 'Citizen not found' });
     } else {
+      await updateStatistics();
+      await client.query('COMMIT');
       res.json(result.rows[0]);
-      updateStatistics();
     }
   } catch (err) {
+    await client.query('ROLLBACK');
     console.error(err);
     res.status(500).json({ error: 'An error occurred while updating the citizen' });
+  } finally {
+    client.release();
   }
 });
 
@@ -415,18 +438,7 @@ app.get('/api/statistics', async (req, res) => {
   }
 });
 
-// Start server and initialize database
-initializeDatabase().then(() => {
-  updateStatistics().then(() => {
-    app.listen(process.env.PORT || 3000, () => {
-      console.log(`Server is running`);
-    });
-  });
-}).catch(err => {
-  console.error('Failed to initialize database', err);
-  process.exit(1);
-});
-
+// Search citizens
 app.post('/api/citizens/search', async (req, res) => {
   console.log('Received search request:', req.body);
 
@@ -481,4 +493,16 @@ app.post('/api/citizens/search', async (req, res) => {
       res.status(500).json({ error: 'An error occurred while searching citizens' });
     }
   }
+});
+
+// Start server and initialize database
+initializeDatabase().then(() => {
+  updateStatistics().then(() => {
+    app.listen(process.env.PORT || 3000, () => {
+      console.log(`Server is running`);
+    });
+  });
+}).catch(err => {
+  console.error('Failed to initialize database', err);
+  process.exit(1);
 });
